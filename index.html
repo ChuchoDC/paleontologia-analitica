@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Histograma & Verosimilitud</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@300;400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0b0f1a;
+  --surface: #131928;
+  --border: #1e2840;
+  --text: #e8eaf0;
+  --muted: #5a637a;
+  --hist: #3b6bff;
+  --hist-glow: rgba(59,107,255,0.3);
+  --curve: #ff6b3b;
+  --curve-glow: rgba(255,107,59,0.4);
+  --mean: #ffd166;
+  --std: #06d6a0;
+  --accent: #c77dff;
+}
+* { box-sizing: border-box; margin:0; padding:0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'IBM Plex Mono', monospace;
+  min-height: 100vh;
+  padding: 2rem 1rem 4rem;
+}
+
+/* Grain overlay */
+body::before {
+  content:''; position:fixed; inset:0; pointer-events:none; z-index:0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  background-size: 200px 200px;
+}
+
+.container { max-width: 900px; margin: 0 auto; position: relative; z-index:1; }
+
+header { margin-bottom: 2rem; }
+header h1 {
+  font-family: 'DM Serif Display', serif;
+  font-size: clamp(1.8rem, 4vw, 2.8rem);
+  letter-spacing: -0.5px;
+  line-height: 1.1;
+  background: linear-gradient(135deg, #e8eaf0, var(--accent));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+header p { color: var(--muted); font-size: 0.72rem; letter-spacing: 2px; text-transform: uppercase; margin-top: 0.4rem; }
+
+/* MODE TOGGLE */
+.mode-toggle {
+  display: flex; gap: 0; margin-bottom: 1.4rem; width: fit-content;
+  border: 1px solid var(--border);
+}
+.mode-btn {
+  background: transparent; color: var(--muted); border: none;
+  padding: 0.5rem 1.2rem; cursor: pointer;
+  font-family: 'IBM Plex Mono', monospace; font-size: 0.72rem;
+  letter-spacing: 1px; text-transform: uppercase;
+  transition: background 0.15s, color 0.15s;
+}
+.mode-btn.active { background: var(--hist); color: white; }
+.mode-btn:not(.active):hover { background: var(--border); color: var(--text); }
+
+.controls {
+  display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+.ctrl-group { display:flex; flex-direction:column; gap:0.3rem; }
+.ctrl-group label { font-size: 0.65rem; letter-spacing: 2px; text-transform:uppercase; color: var(--muted); }
+.ctrl-group input {
+  width: 80px; background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); padding: 0.4rem 0.6rem;
+  font-family: 'IBM Plex Mono', monospace; font-size: 0.85rem;
+}
+.btn {
+  margin-top: auto;
+  background: var(--hist); color: white; border: none;
+  padding: 0.55rem 1.3rem; cursor:pointer;
+  font-family: 'IBM Plex Mono', monospace; font-size: 0.78rem;
+  letter-spacing: 1px; text-transform: uppercase;
+  transition: background 0.15s, box-shadow 0.15s;
+  box-shadow: 0 0 16px var(--hist-glow);
+}
+.btn:hover { background: #5580ff; box-shadow: 0 0 28px var(--hist-glow); }
+
+/* MANUAL INPUT PANEL */
+.manual-panel {
+  background: var(--surface); border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  padding: 1.2rem; margin-bottom: 1.5rem; display: none;
+}
+.manual-panel.visible { display: block; }
+.manual-panel h3 {
+  font-size: 0.65rem; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 0.8rem;
+}
+.manual-panel textarea {
+  width: 100%; min-height: 90px;
+  background: var(--bg); border: 1px solid var(--border);
+  color: var(--text); padding: 0.7rem;
+  font-family: 'IBM Plex Mono', monospace; font-size: 0.82rem;
+  resize: vertical; outline: none;
+  transition: border-color 0.15s;
+}
+.manual-panel textarea:focus { border-color: var(--accent); }
+.manual-panel .hint {
+  font-size: 0.65rem; color: var(--muted); margin-top: 0.5rem; line-height: 1.6;
+}
+.manual-panel .parse-status {
+  font-size: 0.7rem; margin-top: 0.5rem; min-height: 1.2em;
+}
+.parse-status.ok  { color: var(--std); }
+.parse-status.err { color: var(--curve); }
+
+/* STATS ROW */
+.stats-row {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.8rem;
+  margin-bottom: 1.5rem;
+}
+.stat {
+  background: var(--surface); border: 1px solid var(--border);
+  padding: 0.9rem; position: relative; overflow: hidden;
+}
+.stat::before {
+  content:''; position:absolute; top:0; left:0; right:0; height:2px;
+}
+.stat.s-mean::before { background: var(--mean); }
+.stat.s-std::before  { background: var(--std); }
+.stat.s-var::before  { background: var(--accent); }
+.stat.s-n::before    { background: var(--hist); }
+.stat .lbl { font-size:0.6rem; letter-spacing:2px; text-transform:uppercase; color:var(--muted); }
+.stat .val { font-size:1.3rem; font-weight:600; margin-top:0.2rem; }
+.stat.s-mean .val { color: var(--mean); }
+.stat.s-std .val  { color: var(--std); }
+.stat.s-var .val  { color: var(--accent); }
+.stat.s-n .val    { color: var(--hist); }
+
+/* CANVAS AREA */
+.chart-wrap {
+  background: var(--surface); border: 1px solid var(--border);
+  padding: 1rem; position: relative;
+}
+.chart-title {
+  font-size: 0.65rem; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 0.8rem;
+  display: flex; justify-content: space-between; align-items: center;
+}
+canvas { display: block; width: 100%; }
+
+/* LEGEND */
+.legend {
+  display: flex; gap: 1.5rem; flex-wrap: wrap;
+  margin-top: 0.8rem; font-size: 0.7rem; color: var(--muted);
+}
+.legend-item { display:flex; align-items:center; gap:0.4rem; }
+.legend-dot { width:10px; height:10px; border-radius:2px; }
+
+/* FORMULA */
+.formula-box {
+  background: var(--surface); border: 1px solid var(--border);
+  border-left: 3px solid var(--curve);
+  padding: 1.2rem; margin-top: 1.2rem; font-size: 0.8rem;
+}
+.formula-box h3 {
+  font-family: 'DM Serif Display', serif; font-size: 1.05rem;
+  color: var(--curve); margin-bottom: 0.7rem;
+}
+.formula-box .eq {
+  color: var(--curve); font-style: italic;
+  background: #1a0d08; padding: 0.5rem 0.8rem; margin: 0.5rem 0;
+  border: 1px solid #3a1a0a; letter-spacing: 0.5px;
+}
+.formula-box p { line-height: 1.7; color: #9aa0b2; font-size: 0.75rem; }
+
+/* DATA TABLE */
+.data-section {
+  margin-top: 1.2rem;
+  background: var(--surface); border: 1px solid var(--border); padding: 1rem;
+}
+.data-section h3 {
+  font-size: 0.65rem; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 0.8rem;
+}
+.data-grid {
+  display: grid; grid-template-columns: repeat(10, 1fr); gap: 0.3rem;
+}
+.data-pill {
+  text-align: center; font-size: 0.65rem; padding: 0.3rem 0.1rem;
+  background: var(--bg); border: 1px solid var(--border); color: #7a8299;
+  transition: border-color 0.2s, color 0.2s;
+}
+.data-pill.hi { border-color: var(--hist); color: var(--hist); }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>Práctica de Paleontología Analítica<br><em>Facultad de Ciencias, UNAM</em></h1>
+    <p style="color:var(--muted); font-size:0.72rem; letter-spacing:2px; text-transform:uppercase; margin-top:0.4rem;">Dr. Jesús Alberto Díaz Cruz</p>
+    <p id="header-sub" style="color:var(--muted); font-size:0.68rem; letter-spacing:1.5px; text-transform:uppercase; margin-top:0.5rem;">Variación morfológica · Histograma &amp; Curva [Función] de Verosimilitud</p>
+  </header>
+
+  <!-- MODE TOGGLE -->
+  <div class="mode-toggle">
+    <button class="mode-btn active" id="btn-aleatorio" onclick="setMode('aleatorio')">⚂ Aleatorio</button>
+    <button class="mode-btn"        id="btn-manual"    onclick="setMode('manual')">✎ Mis datos</button>
+  </div>
+
+  <!-- RANDOM MODE CONTROLS -->
+  <div class="controls" id="random-controls">
+    <div class="ctrl-group">
+      <label>N números</label>
+      <input type="number" id="n-count" value="50" min="5" max="500">
+    </div>
+    <div class="ctrl-group">
+      <label>μ (media)</label>
+      <input type="number" id="mu" value="0" step="0.5">
+    </div>
+    <div class="ctrl-group">
+      <label>σ (desv. est.)</label>
+      <input type="number" id="sigma" value="1" step="0.1" min="0.1">
+    </div>
+    <div class="ctrl-group">
+      <label>Bins</label>
+      <input type="number" id="bins" value="10" min="5" max="20">
+    </div>
+    <button class="btn" onclick="run()">▶ Regenerar</button>
+  </div>
+
+  <!-- MANUAL INPUT PANEL -->
+  <div class="manual-panel" id="manual-panel">
+    <h3>Ingresa tus mediciones</h3>
+    <textarea id="manual-input" placeholder="Escribe o pega tus valores separados por comas, espacios o saltos de línea.&#10;&#10;Ejemplo: 1.2, 3.4, 2.8, 5.1, 0.9, 4.3 ..."></textarea>
+    <div class="hint">
+      Acepta: comas, espacios, puntos y coma o saltos de línea como separadores.<br>
+      Usa punto ( . ) como decimal. Se necesitan al menos 3 valores.
+    </div>
+    <div class="parse-status" id="parse-status"></div>
+  </div>
+
+  <!-- MANUAL MODE CONTROLS -->
+  <div class="controls" id="manual-controls" style="display:none">
+    <div class="ctrl-group">
+      <label>Bins</label>
+      <input type="number" id="bins-manual" value="10" min="3" max="30">
+    </div>
+    <button class="btn" onclick="run()">▶ Graficar</button>
+  </div>
+
+  <div class="stats-row">
+    <div class="stat s-n">  <div class="lbl">N muestras</div><div class="val" id="s-n">—</div></div>
+    <div class="stat s-mean"><div class="lbl">Media (x̄)</div><div class="val" id="s-mean">—</div></div>
+    <div class="stat s-std"> <div class="lbl">Desv. Est. (s)</div><div class="val" id="s-std">—</div></div>
+    <div class="stat s-var"> <div class="lbl">Varianza (s²)</div><div class="val" id="s-var">—</div></div>
+  </div>
+
+  <div class="chart-wrap">
+    <div class="chart-title">
+      <span>Histograma de frecuencias + Curva Normal estimada</span>
+    </div>
+    <canvas id="chart" height="360"></canvas>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:var(--hist)"></div>Frecuencia relativa</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--curve);border-radius:50%"></div>f(x) Normal estimada</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--mean)"></div>Media x̄</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--std)"></div>±1σ</div>
+    </div>
+  </div>
+
+  <div class="formula-box">
+    <h3>Función de densidad normal (verosimilitud)</h3>
+    <div class="eq">f(x | μ, σ) = 1 / (σ√(2π)) · exp( −(x − μ)² / (2σ²) )</div>
+    <p>
+      La <strong style="color:var(--curve)">curva naranja</strong> es la función de densidad de probabilidad (PDF) de una distribución Normal
+      evaluada usando la <strong>media muestral x̄</strong> y la <strong>desviación estándar muestral s</strong>
+      calculadas a partir de los 50 datos generados.<br><br>
+      En el enfoque de <strong>máxima verosimilitud (MLE)</strong>, dado un conjunto de datos, los estimadores
+      que maximizan la función de verosimilitud L(μ,σ|datos) son precisamente x̄ y s.
+      Por eso la curva representa la distribución normal que <em>mejor se ajusta</em> a tus datos.
+    </p>
+    <div class="eq" id="formula-filled">—</div>
+  </div>
+
+  <div class="data-section">
+    <h3 id="data-section-title">Los valores</h3>
+    <div class="data-grid" id="data-grid"></div>
+  </div>
+</div>
+
+<script>
+let currentMode = 'aleatorio';
+
+function setMode(mode) {
+  currentMode = mode;
+  document.getElementById('btn-aleatorio').classList.toggle('active', mode === 'aleatorio');
+  document.getElementById('btn-manual').classList.toggle('active', mode === 'manual');
+  document.getElementById('random-controls').style.display  = mode === 'aleatorio' ? 'flex' : 'none';
+  document.getElementById('manual-panel').classList.toggle('visible', mode === 'manual');
+  document.getElementById('manual-controls').style.display  = mode === 'manual' ? 'flex' : 'none';
+}
+
+function parseManualData() {
+  const raw = document.getElementById('manual-input').value;
+  const tokens = raw.split(/[\s,;]+/).filter(t => t.trim() !== '');
+  const nums = tokens.map(t => parseFloat(t.replace(',', '.')));
+  const valid = nums.filter(n => !isNaN(n));
+  const status = document.getElementById('parse-status');
+  if (valid.length < 3) {
+    status.className = 'parse-status err';
+    status.textContent = `✗ Solo se encontraron ${valid.length} valores válidos. Se necesitan al menos 3.`;
+    return null;
+  }
+  status.className = 'parse-status ok';
+  status.textContent = `✓ ${valid.length} valores detectados.`;
+  return valid;
+}
+
+// Live parse feedback
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('manual-input').addEventListener('input', () => {
+    const raw = document.getElementById('manual-input').value.trim();
+    if (raw) parseManualData();
+    else document.getElementById('parse-status').textContent = '';
+  });
+});
+
+// Box-Muller
+function randNormal(mu, sigma) {
+  let u=0,v=0;
+  while(!u) u=Math.random();
+  while(!v) v=Math.random();
+  return mu + sigma * Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v);
+}
+
+function normalPDF(x, mu, sigma) {
+  return Math.exp(-0.5*((x-mu)/sigma)**2) / (sigma * Math.sqrt(2*Math.PI));
+}
+
+function run() {
+  let data, nBins;
+
+  if (currentMode === 'manual') {
+    data = parseManualData();
+    if (!data) return;
+    nBins = parseInt(document.getElementById('bins-manual').value) || 10;
+    document.getElementById('header-sub').textContent = `Variación morfológica · Histograma & Curva [Función] de Verosimilitud`;
+    document.getElementById('data-section-title').textContent = `Los ${data.length} valores ingresados`;
+  } else {
+    const mu0  = parseFloat(document.getElementById('mu').value)    || 0;
+    const sig0 = parseFloat(document.getElementById('sigma').value) || 1;
+    const nCount = Math.max(3, Math.min(500, parseInt(document.getElementById('n-count').value) || 50));
+    nBins = parseInt(document.getElementById('bins').value) || 10;
+    data = Array.from({length: nCount}, () => randNormal(mu0, sig0));
+    document.getElementById('header-sub').textContent = `Variación morfológica · Histograma & Curva [Función] de Verosimilitud`;
+    document.getElementById('data-section-title').textContent = `Los ${nCount} valores generados`;
+  }
+
+  // Stats (sample)
+  const n    = data.length;
+  const mean = data.reduce((a,b)=>a+b,0)/n;
+  const variance = data.reduce((a,x)=>a+(x-mean)**2,0)/(n-1);
+  const std  = Math.sqrt(variance);
+
+  // Update stat boxes
+  document.getElementById('s-n').textContent    = n;
+  document.getElementById('s-mean').textContent = mean.toFixed(3);
+  document.getElementById('s-std').textContent  = std.toFixed(4);
+  document.getElementById('s-var').textContent  = variance.toFixed(4);
+  document.getElementById('formula-filled').textContent =
+    `f(x | x̄=${mean.toFixed(3)}, s=${std.toFixed(3)}) = 1/(${std.toFixed(3)}·√(2π)) · exp(−(x − ${mean.toFixed(3)})² / (2·${std.toFixed(3)}²))`;
+
+  // Histogram bins
+  const minV = Math.min(...data), maxV = Math.max(...data);
+  const range = maxV - minV;
+  const bw    = range / nBins;
+  const bins  = Array.from({length:nBins}, (_,i) => ({
+    lo: minV + i*bw, hi: minV + (i+1)*bw, count: 0
+  }));
+  data.forEach(v => {
+    let idx = Math.floor((v - minV) / bw);
+    if(idx >= nBins) idx = nBins - 1;
+    bins[idx].count++;
+  });
+  const freqRel = bins.map(b => b.count / n / bw); // density
+
+  // Draw canvas
+  const canvas = document.getElementById('chart');
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.parentElement.clientWidth - 32;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = '360px';
+  canvas.width  = W * dpr;
+  canvas.height = 360 * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const PAD = { top:20, right:20, bottom:50, left:55 };
+  const cw = W - PAD.left - PAD.right;
+  const ch = 360 - PAD.top - PAD.bottom;
+
+  ctx.clearRect(0, 0, W, 360);
+
+  // PDF curve for y-scale
+  const pdfXs = Array.from({length:200}, (_,i) => minV - range*0.15 + i*(range*1.3/199));
+  const pdfYs = pdfXs.map(x => normalPDF(x, mean, std));
+  const maxY  = Math.max(...freqRel, ...pdfYs) * 1.15;
+
+  const xToC = x => PAD.left + (x - (minV - range*0.15)) / (range*1.3) * cw;
+  const yToC = y => PAD.top  + ch - (y / maxY) * ch;
+
+  // Grid lines
+  ctx.strokeStyle = '#1e2840';
+  ctx.lineWidth = 1;
+  for(let i=0; i<=5; i++) {
+    const y = PAD.top + i*(ch/5);
+    ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(PAD.left+cw, y); ctx.stroke();
+    const lbl = ((1 - i/5) * maxY).toFixed(2);
+    ctx.fillStyle = '#5a637a'; ctx.font = '10px IBM Plex Mono';
+    ctx.textAlign = 'right';
+    ctx.fillText(lbl, PAD.left - 6, y+4);
+  }
+
+  // X axis labels
+  ctx.textAlign = 'center'; ctx.fillStyle = '#5a637a'; ctx.font = '10px IBM Plex Mono';
+  bins.forEach((b,i) => {
+    if(i % 2 === 0) {
+      const cx = xToC((b.lo+b.hi)/2);
+      ctx.fillText(((b.lo+b.hi)/2).toFixed(2), cx, PAD.top+ch+18);
+    }
+  });
+
+  // Histogram bars
+  const barPad = 1;
+  bins.forEach((b,i) => {
+    const x1 = xToC(b.lo)+barPad, x2 = xToC(b.hi)-barPad;
+    const bh  = yToC(0) - yToC(freqRel[i]);
+    const by  = yToC(freqRel[i]);
+    // glow
+    ctx.shadowColor = 'rgba(59,107,255,0.5)';
+    ctx.shadowBlur  = 8;
+    const grad = ctx.createLinearGradient(0, by, 0, yToC(0));
+    grad.addColorStop(0, '#3b6bff');
+    grad.addColorStop(1, '#1a3080');
+    ctx.fillStyle = grad;
+    ctx.fillRect(x1, by, x2-x1, bh);
+    ctx.shadowBlur = 0;
+  });
+
+  // ±1σ bands
+  const x_m1 = xToC(mean - std), x_p1 = xToC(mean + std);
+  const bandGrad = ctx.createLinearGradient(x_m1, 0, x_p1, 0);
+  bandGrad.addColorStop(0,   'rgba(6,214,160,0)');
+  bandGrad.addColorStop(0.3, 'rgba(6,214,160,0.06)');
+  bandGrad.addColorStop(0.7, 'rgba(6,214,160,0.06)');
+  bandGrad.addColorStop(1,   'rgba(6,214,160,0)');
+  ctx.fillStyle = bandGrad;
+  ctx.fillRect(x_m1, PAD.top, x_p1-x_m1, ch);
+
+  // ±1σ lines
+  [[mean-std,'−1σ'],[mean+std,'+1σ']].forEach(([v,lbl]) => {
+    const cx = xToC(v);
+    ctx.strokeStyle = '#06d6a0'; ctx.lineWidth = 1.5;
+    ctx.setLineDash([4,3]);
+    ctx.beginPath(); ctx.moveTo(cx, PAD.top); ctx.lineTo(cx, PAD.top+ch); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#06d6a0'; ctx.font = '9px IBM Plex Mono'; ctx.textAlign = 'center';
+    ctx.fillText(lbl, cx, PAD.top - 4);
+  });
+
+  // Mean line
+  const mx = xToC(mean);
+  ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 2; ctx.setLineDash([5,3]);
+  ctx.beginPath(); ctx.moveTo(mx, PAD.top); ctx.lineTo(mx, PAD.top+ch); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#ffd166'; ctx.font = '9px IBM Plex Mono'; ctx.textAlign = 'center';
+  ctx.fillText('x̄', mx, PAD.top - 4);
+
+  // Normal PDF curve
+  ctx.shadowColor = 'rgba(255,107,59,0.5)';
+  ctx.shadowBlur  = 12;
+  ctx.strokeStyle = '#ff6b3b'; ctx.lineWidth = 2.5; ctx.setLineDash([]);
+  ctx.beginPath();
+  pdfXs.forEach((x,i) => {
+    const cx = xToC(x), cy = yToC(pdfYs[i]);
+    i === 0 ? ctx.moveTo(cx, cy) : ctx.lineTo(cx, cy);
+  });
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Fill under curve (translucent)
+  ctx.beginPath();
+  pdfXs.forEach((x,i) => {
+    const cx = xToC(x), cy = yToC(pdfYs[i]);
+    i === 0 ? ctx.moveTo(cx, cy) : ctx.lineTo(cx, cy);
+  });
+  ctx.lineTo(xToC(pdfXs[pdfXs.length-1]), yToC(0));
+  ctx.lineTo(xToC(pdfXs[0]), yToC(0));
+  ctx.closePath();
+  const fillGrad = ctx.createLinearGradient(0, PAD.top, 0, PAD.top+ch);
+  fillGrad.addColorStop(0, 'rgba(255,107,59,0.18)');
+  fillGrad.addColorStop(1, 'rgba(255,107,59,0)');
+  ctx.fillStyle = fillGrad;
+  ctx.fill();
+
+  // Axes
+  ctx.strokeStyle = '#2a3550'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top); ctx.lineTo(PAD.left, PAD.top+ch); ctx.lineTo(PAD.left+cw, PAD.top+ch); ctx.stroke();
+  ctx.fillStyle = '#5a637a'; ctx.font = '10px IBM Plex Mono'; ctx.textAlign = 'center';
+  ctx.fillText('Densidad', 12, PAD.top + ch/2);
+  ctx.fillText('Valor x', PAD.left + cw/2, PAD.top + ch + 40);
+
+  // Data pills
+  const sorted = [...data].sort((a,b)=>a-b);
+  const dg = document.getElementById('data-grid');
+  dg.innerHTML = '';
+  sorted.forEach(v => {
+    const d = document.createElement('div');
+    d.className = 'data-pill' + (v >= mean-std && v <= mean+std ? ' hi' : '');
+    d.textContent = v.toFixed(2);
+    dg.appendChild(d);
+  });
+}
+
+run();
+window.addEventListener('resize', run);
+</script>
+</body>
+</html>
