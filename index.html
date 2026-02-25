@@ -253,8 +253,8 @@ canvas { display: block; width: 100%; }
   <div class="stats-row">
     <div class="stat s-n">  <div class="lbl">N muestras</div><div class="val" id="s-n">—</div></div>
     <div class="stat s-mean"><div class="lbl">Media (x̄)</div><div class="val" id="s-mean">—</div></div>
-    <div class="stat s-std"> <div class="lbl">Desv. Est. (s)</div><div class="val" id="s-std">—</div></div>
-    <div class="stat s-var"> <div class="lbl">Varianza (s²)</div><div class="val" id="s-var">—</div></div>
+    <div class="stat s-std"> <div class="lbl">Desv. Est. MLE (σ̂)</div><div class="val" id="s-std">—</div></div>
+    <div class="stat s-var"> <div class="lbl">Varianza MLE (σ̂²)</div><div class="val" id="s-var">—</div></div>
   </div>
 
   <div class="chart-wrap">
@@ -271,15 +271,18 @@ canvas { display: block; width: 100%; }
   </div>
 
   <div class="formula-box">
-    <h3>Función de densidad normal (verosimilitud)</h3>
-    <div class="eq">f(x | μ, σ) = 1 / (σ√(2π)) · exp( −(x − μ)² / (2σ²) )</div>
+    <h3>Función de verosimilitud — Estimación MLE</h3>
+    <div class="eq">L(μ, σ | datos) = ∏ f(xᵢ | μ, σ) = ∏ 1/(σ√(2π)) · exp(−(xᵢ − μ)² / (2σ²))</div>
     <p>
-      La <strong style="color:var(--curve)">curva naranja</strong> es la función de densidad de probabilidad (PDF) de una distribución Normal
-      evaluada usando la <strong>media muestral x̄</strong> y la <strong>desviación estándar muestral s</strong>
-      calculadas a partir de los 50 datos generados.<br><br>
-      En el enfoque de <strong>máxima verosimilitud (MLE)</strong>, dado un conjunto de datos, los estimadores
-      que maximizan la función de verosimilitud L(μ,σ|datos) son precisamente x̄ y s.
-      Por eso la curva representa la distribución normal que <em>mejor se ajusta</em> a tus datos.
+      Maximizar L respecto a μ y σ produce los <strong>estimadores de máxima verosimilitud (MLE)</strong>:<br><br>
+      &nbsp;&nbsp;&nbsp;μ̂ = x̄ &nbsp;&nbsp;&nbsp;&nbsp; σ̂² = Σ(xᵢ − x̄)² / <strong>n</strong> &nbsp;(÷ n, no n−1)
+    </p>
+    <div class="eq">f(x | μ̂, σ̂) = 1 / (σ̂√(2π)) · exp( −(x − μ̂)² / (2σ̂²) )</div>
+    <p>
+      La <strong style="color:var(--curve)">curva naranja</strong> es la PDF normal evaluada en los estimadores MLE.
+      Representa la distribución que <em>maximiza la probabilidad</em> de haber observado exactamente estos datos.<br><br>
+      Nota: el estimador MLE de la varianza (÷ n) es <em>sesgado</em> — subestima ligeramente la varianza poblacional
+      real. El estimador insesgado usa ÷ (n−1), pero no es el MLE estricto.
     </p>
     <div class="eq" id="formula-filled">—</div>
   </div>
@@ -361,7 +364,8 @@ function run() {
   // Stats (sample)
   const n    = data.length;
   const mean = data.reduce((a,b)=>a+b,0)/n;
-  const variance = data.reduce((a,x)=>a+(x-mean)**2,0)/(n-1);
+  const variance = data.reduce((a,x)=>a+(x-mean)**2,0)/n;     // MLE: ÷n
+  const varianceSample = data.reduce((a,x)=>a+(x-mean)**2,0)/(n-1); // insesgada: ÷n-1
   const std  = Math.sqrt(variance);
 
   // Update stat boxes
@@ -370,7 +374,7 @@ function run() {
   document.getElementById('s-std').textContent  = std.toFixed(4);
   document.getElementById('s-var').textContent  = variance.toFixed(4);
   document.getElementById('formula-filled').textContent =
-    `f(x | x̄=${mean.toFixed(3)}, s=${std.toFixed(3)}) = 1/(${std.toFixed(3)}·√(2π)) · exp(−(x − ${mean.toFixed(3)})² / (2·${std.toFixed(3)}²))`;
+    `f(x | μ̂=${mean.toFixed(3)}, σ̂=${std.toFixed(3)}) = 1/(${std.toFixed(3)}·√(2π)) · exp(−(x − ${mean.toFixed(3)})² / (2·${std.toFixed(3)}²))  [MLE: σ̂² = Σ(xᵢ−x̄)²/${n}]`;
 
   // Histogram bins
   const minV = Math.min(...data), maxV = Math.max(...data);
